@@ -747,15 +747,9 @@ export default function (pi: ExtensionAPI) {
 	function updateVoiceStatus() {
 		if (!ctx?.hasUI) return;
 		switch (voiceState) {
-			case "idle": {
-				if (!config.enabled) {
-					ctx.ui.setStatus("voice", undefined);
-					break;
-				}
-				const modeTag = !config.onboarding.completed ? "SETUP" : config.backend === "local" ? "LOCAL" : "STREAM";
-				ctx.ui.setStatus("voice", `MIC ${modeTag}`);
+			case "idle":
+				ctx.ui.setStatus("voice", undefined);
 				break;
-			}
 			case "warmup":
 				ctx.ui.setStatus("voice", "MIC HOLD...");
 				break;
