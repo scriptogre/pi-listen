@@ -1611,11 +1611,9 @@ export default function (pi: ExtensionAPI) {
 			// ── Track non-space keypresses for typing cooldown ──
 			// If user was just typing (non-space key within TYPING_COOLDOWN_MS),
 			// don't let space holds activate voice — they're just typing.
-			if (!matchesKey(data, "space") && !isKeyRelease(data) && !isKeyRepeat(data)) {
-				// Regular keypress that isn't space — user is typing
-				if (data.length > 0 && data.charCodeAt(0) >= 32) {
-					lastNonSpaceKeyTime = Date.now();
-				}
+			if (data.length > 0 && !matchesKey(data, "space") && !isKeyRelease(data) && !isKeyRepeat(data)) {
+				// Kitty printable presses start with ESC, so the raw first byte cannot identify typing.
+				lastNonSpaceKeyTime = Date.now();
 			}
 
 			// ── SPACE handling ──
