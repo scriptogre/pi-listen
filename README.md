@@ -216,8 +216,9 @@ Plus 8 language-specialized Moonshine v2 variants for Japanese, Korean, Arabic, 
 ### How local models work
 
 ```
-Hold SPACE → audio captured to memory buffer
+Hold SPACE, or set `shortcutMode` to `push` to replace it with the configured shortcut
                 ↓
+Audio captured to memory buffer
 Release SPACE → buffer sent to sherpa-onnx (in-process)
                 ↓
          ONNX inference on CPU (2–10 seconds)

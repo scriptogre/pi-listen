@@ -63,7 +63,7 @@ import type {
 	ExtensionContext,
 	ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
-import { isKeyRelease, isKeyRepeat, matchesKey, Key, type KeyId } from "@mariozechner/pi-tui";
+import { isKeyRelease, isKeyRepeat, matchesKey, parseKey, Key, type KeyId } from "@mariozechner/pi-tui";
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
@@ -139,6 +139,8 @@ const TAIL_RECORDING_MS = 1500;   // Keep recording for 1.5s after space release
                                    // trailing words. If user re-presses space within this
                                    // window, cancel the delayed stop and keep recording.
 const CORRUPTION_GUARD_MS = 200;  // Min gap between stop and restart
+const SHORTCUT_INITIAL_RELEASE_MS = 650;
+const SHORTCUT_REPEAT_RELEASE_MS = 120;
 
 // Debug logging — set PI_VOICE_DEBUG=1 to enable
 const VOICE_DEBUG = !!process.env.PI_VOICE_DEBUG;
@@ -698,6 +700,9 @@ export default function (pi: ExtensionAPI) {
 	let errorCooldownUntil = 0;       // After an error, block re-activation until this timestamp
 	let lastNonSpaceKeyTime = 0;      // Timestamp of last non-space keypress (typing cooldown)
 	let tailRecordingTimer: ReturnType<typeof setTimeout> | null = null; // Delayed stop after release
+	let shortcutKeyDown: string | undefined;
+	let shortcutReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+	let shortcutOperation = Promise.resolve();
 
 	// ─── Recording History ───────────────────────────────────────────────────
 
@@ -831,6 +836,9 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	function voiceCleanup() {
+		shortcutKeyDown = undefined;
+		if (shortcutReleaseTimer) clearTimeout(shortcutReleaseTimer);
+		shortcutReleaseTimer = undefined;
 		// v7.1: cancel in-flight installs FIRST so their AbortControllers
 		// fire before we drop UI state. Without this, a session_shutdown
 		// during a download would leave the network/disk work running
@@ -1481,6 +1489,35 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
+	function keyIdentity(key: string | undefined): string | undefined {
+		return key?.replace(/^(?:(?:ctrl|shift|alt|super|meta|cmd)\+)+/, "");
+	}
+
+	function enqueueShortcut(action: () => Promise<void>): void {
+		shortcutOperation = shortcutOperation.then(action, action).catch((error: unknown) => {
+			ctx?.ui.notify(error instanceof Error ? error.message : String(error), "error");
+		});
+	}
+
+	function clearShortcutReleaseTimer(): void {
+		if (shortcutReleaseTimer) clearTimeout(shortcutReleaseTimer);
+		shortcutReleaseTimer = undefined;
+	}
+
+	function finishPushShortcut(): void {
+		if (!shortcutKeyDown) return;
+		shortcutKeyDown = undefined;
+		clearShortcutReleaseTimer();
+		enqueueShortcut(async () => {
+			if (voiceState === "recording") await stopVoiceRecording();
+		});
+	}
+
+	function armShortcutRelease(delay: number): void {
+		clearShortcutReleaseTimer();
+		shortcutReleaseTimer = setTimeout(finishPushShortcut, delay);
+	}
+
 	// ─── Hold-to-Talk State Machine ─────────────────────────────────────────
 	//
 	// SPACE key handling with STRICT hold-duration detection.
@@ -1580,6 +1617,15 @@ export default function (pi: ExtensionAPI) {
 		terminalInputUnsub = ctx.ui.onTerminalInput((data: string) => {
 			if (!config.enabled) return undefined;
 
+			if (config.shortcutMode === "push" && shortcutKeyDown && keyIdentity(parseKey(data)) === shortcutKeyDown) {
+				if (isKeyRelease(data)) finishPushShortcut();
+				else if (matchesKey(data, resolvedToggleShortcut as KeyId)) armShortcutRelease(SHORTCUT_REPEAT_RELEASE_MS);
+				return { consume: true };
+			}
+			if (matchesKey(data, resolvedToggleShortcut as KeyId) && (isKeyRepeat(data) || isKeyRelease(data))) {
+				return { consume: true };
+			}
+
 			// v7.1 §4 — escape priority routing for v7.1 widgets. When
 			// no overlay (panel/help/picker) is in front (those run
 			// inside ctx.ui.custom() and consume their own input), the
@@ -1617,7 +1663,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			// ── SPACE handling ──
-			if (matchesKey(data, "space")) {
+			if (config.shortcutMode !== "push" && matchesKey(data, "space")) {
 				// ── ERROR COOLDOWN: block all voice activation for 5s after an error ──
 				if (errorCooldownUntil > Date.now()) {
 					// During cooldown, let space through as a normal character
@@ -2043,11 +2089,23 @@ export default function (pi: ExtensionAPI) {
 	// signature change. If pi-tui later promotes KeyId to `string`, this
 	// assertion just becomes a no-op.
 	pi.registerShortcut(resolvedToggleShortcut as KeyId, {
-		description: "Toggle voice recording (start/stop)",
+		description: "Voice recording shortcut",
 		handler: async (handlerCtx) => {
 			ctx = handlerCtx;
 			if (!config.enabled) {
 				handlerCtx.ui.notify("Voice disabled. Use /voice on", "warning");
+				return;
+			}
+			if (config.shortcutMode === "push") {
+				if (shortcutKeyDown) return;
+				shortcutKeyDown = keyIdentity(resolvedToggleShortcut);
+				armShortcutRelease(SHORTCUT_INITIAL_RELEASE_MS);
+				enqueueShortcut(async () => {
+					if (voiceState !== "idle") return;
+					spaceConsumed = true;
+					const ok = await startVoiceRecording();
+					if (!ok) spaceConsumed = false;
+				});
 				return;
 			}
 			if (dictationMode) {

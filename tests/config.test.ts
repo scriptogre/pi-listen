@@ -77,6 +77,20 @@ describe("loadConfigWithSource", () => {
 		expect(result.config.onboarding.completed).toBe(false);
 	});
 
+	test("loads a global push shortcut", () => {
+		const cwd = makeTempDir();
+		const agentDir = path.join(cwd, "agent-home");
+		writeSettings(agentDir, "settings.json", {
+			toggleShortcut: "ctrl+alt+d",
+			shortcutMode: "push",
+		});
+
+		const result = loadConfigWithSource(cwd, { agentDir });
+
+		expect(result.config.toggleShortcut).toBe("ctrl+alt+d");
+		expect(result.config.shortcutMode).toBe("push");
+	});
+
 	test("prefers project config over global config and preserves project scope", () => {
 		const cwd = makeTempDir();
 		const agentDir = path.join(cwd, "agent-home");
@@ -181,6 +195,7 @@ describe("saveConfig", () => {
 
 		expect(savedPath).toBe(path.join(agentDir, "settings.json"));
 		expect(saved.voice.scope).toBe("global");
+		expect(saved.voice.shortcutMode).toBe("toggle");
 	});
 
 	test("writes project settings when scope is project", () => {

@@ -22,6 +22,7 @@ export interface VoiceOnboardingState {
 }
 
 export type VoiceBackend = "deepgram" | "local";
+export type VoiceShortcutMode = "toggle" | "push";
 
 export interface VoiceConfig {
 	version: number;
@@ -39,6 +40,8 @@ export interface VoiceConfig {
 	localEndpoint?: string;
 	/** Global-only shortcut used to toggle recording without hold-to-talk */
 	toggleShortcut?: string;
+	/** Whether the configured shortcut toggles recording or acts as push-to-talk. */
+	shortcutMode?: VoiceShortcutMode;
 
 	// ─── TTS (text-to-speech) ─────────────────────────────────────────
 	// All TTS fields are opt-in (default: TTS disabled). New in v6.0.0.
@@ -125,6 +128,7 @@ export const DEFAULT_CONFIG: VoiceConfig = {
 	localModel: undefined,
 	localEndpoint: undefined,
 	toggleShortcut: "ctrl+shift+v",
+	shortcutMode: "toggle",
 	// TTS defaults — all opt-in
 	ttsEnabled: false,
 	ttsBackend: "local",
@@ -197,6 +201,7 @@ function migrateConfig(rawVoice: any, source: VoiceConfigSource): VoiceConfig {
 		toggleShortcut: source !== "project" && typeof rawVoice.toggleShortcut === "string"
 			? rawVoice.toggleShortcut
 			: DEFAULT_CONFIG.toggleShortcut,
+		shortcutMode: source !== "project" && rawVoice.shortcutMode === "push" ? "push" : "toggle",
 		// TTS fields — type-validated; mismatched persisted values fall
 		// back to safe defaults so a hand-edited config can't poison the
 		// engine. Notably: ttsLocalVoiceId rejects strings (would crash
@@ -348,6 +353,7 @@ function serializeConfig(config: VoiceConfig, scope: VoiceSettingsScope): VoiceC
 			: config.localEndpoint,
 		// Shortcut registration is static at extension load time — project-scoped overrides cannot apply
 		toggleShortcut: scope === "project" ? undefined : config.toggleShortcut,
+		shortcutMode: scope === "project" ? undefined : config.shortcutMode,
 		onboarding: {
 			...config.onboarding,
 			schemaVersion: VOICE_CONFIG_VERSION,
