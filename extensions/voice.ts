@@ -1440,7 +1440,6 @@ export default function (pi: ExtensionAPI) {
 		}, 1000);
 
 		showRecordingWidget();
-		playSound("start");
 		return true;
 	}
 
