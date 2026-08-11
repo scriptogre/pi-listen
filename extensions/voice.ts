@@ -84,6 +84,7 @@ import { makeRenderTicker, type RenderTicker } from "./voice/ui-render-ticker";
 import { TtsInstallProgressWidget } from "./voice/tts-install-progress";
 import { TtsPlaybackIndicator } from "./voice/tts-playback-indicator";
 import { buildDeepgramWsUrl, resolveDeepgramApiKey, SAMPLE_RATE, CHANNELS } from "./voice/deepgram";
+import { createDeepgramProvider } from "./voice/deepgram-provider";
 import {
 	startLocalSession, stopLocalSession, abortLocalSession,
 	checkLocalServer, LOCAL_MODELS, DEFAULT_LOCAL_ENDPOINT,
@@ -327,13 +328,13 @@ type VoiceSession = StreamingSession | LocalSession;
 
 function startStreamingSession(
 	config: VoiceConfig,
+	apiKey: string | null,
 	callbacks: {
 		onTranscript: (interim: string, finals: string[]) => void;
 		onDone: (fullText: string, meta: { hadAudio: boolean; hadSpeech: boolean }) => void;
 		onError: (err: string) => void;
 	},
 ): StreamingSession | null {
-	const apiKey = resolveDeepgramApiKey(config);
 	voiceDebug("startStreamingSession", { hasApiKey: !!apiKey });
 	if (!apiKey) {
 		voiceDebug("startStreamingSession → no API key, calling onError");
@@ -424,7 +425,7 @@ function startStreamingSession(
 		recProc.stdout?.on("data", (chunk: Buffer) => {
 			if (ws.readyState === WebSocket.OPEN) {
 				session.hadAudioData = true;
-				try { ws.send(chunk); } catch {}
+				try { ws.send(new Uint8Array(chunk)); } catch {}
 				// Feed audio data to level meter for reactive waveform
 				updateAudioLevel(chunk);
 				// Start stale-session watchdog on first audio chunk
@@ -635,6 +636,11 @@ function abortSession(session: VoiceSession | null): void {
 // ─── Extension ───────────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+	const providerApi = pi as unknown as {
+		registerProvider(provider: ReturnType<typeof createDeepgramProvider>): void;
+	};
+	providerApi.registerProvider(createDeepgramProvider());
+
 	let config = DEFAULT_CONFIG;
 	let configSource: VoiceSettingsScope | "default" = "default";
 	let currentCwd = process.cwd();
@@ -703,6 +709,23 @@ export default function (pi: ExtensionAPI) {
 	let shortcutKeyDown: string | undefined;
 	let shortcutReleaseTimer: ReturnType<typeof setTimeout> | undefined;
 	let shortcutOperation = Promise.resolve();
+	let providerDeepgramApiKey: string | undefined;
+
+	function getDeepgramApiKey(): string | null {
+		return providerDeepgramApiKey || resolveDeepgramApiKey(config);
+	}
+
+	async function refreshDeepgramApiKey(): Promise<void> {
+		try {
+			const registry = ctx?.modelRegistry as unknown as {
+				getProviderAuth(provider: string): Promise<{ auth: { apiKey?: string } } | undefined>;
+			};
+			providerDeepgramApiKey = (await registry?.getProviderAuth("deepgram"))?.auth.apiKey;
+		} catch (error) {
+			voiceDebug("Deepgram auth resolution failed", { error: String(error) });
+			providerDeepgramApiKey = undefined;
+		}
+	}
 
 	// ─── Recording History ───────────────────────────────────────────────────
 
@@ -1143,6 +1166,7 @@ export default function (pi: ExtensionAPI) {
 		_startingRecording = true;
 
 		abortActiveSpeak();
+		await refreshDeepgramApiKey();
 
 		try {
 		// ── SESSION CORRUPTION GUARD ──
@@ -1180,12 +1204,12 @@ export default function (pi: ExtensionAPI) {
 		abortActiveSpeak();
 		if (preRecordingSession) return; // Already started
 		if (config.backend === "local") return;      // No pre-recording for local batch mode
-		if (!resolveDeepgramApiKey(config)) return; // No key — skip silently
+		if (!getDeepgramApiKey()) return; // No key — skip silently
 		if (!detectAudioCaptureTool()) return;       // No audio tool — skip silently
 
 		voiceDebug("startPreRecording → capturing audio during warmup");
 
-		const session = startStreamingSession(config, {
+		const session = startStreamingSession(config, getDeepgramApiKey(), {
 			onTranscript: (interim, finals) => {
 				// During warmup, silently accumulate transcript
 				// (don't update UI — user hasn't committed to voice yet)
@@ -1216,7 +1240,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function startStreamingRecording(): Promise<boolean> {
-		voiceDebug("startStreamingRecording called", { hasKey: !!resolveDeepgramApiKey(config), hasPreRecording: !!preRecordingSession });
+		voiceDebug("startStreamingRecording called", { hasKey: !!getDeepgramApiKey(), hasPreRecording: !!preRecordingSession });
 		setVoiceState("recording");
 
 		// ── Callbacks for the active recording session ──
@@ -1416,7 +1440,7 @@ export default function (pi: ExtensionAPI) {
 				updateLiveTranscriptWidget(session.interimText, session.finalizedParts);
 			}
 		} else {
-			session = startStreamingSession(config, recordingCallbacks);
+			session = startStreamingSession(config, getDeepgramApiKey(), recordingCallbacks);
 		}
 
 		if (!session) {
@@ -2163,6 +2187,7 @@ export default function (pi: ExtensionAPI) {
 		const loaded = loadConfigWithSource(startCtx.cwd);
 		config = loaded.config;
 		configSource = loaded.source;
+		await refreshDeepgramApiKey();
 
 		// v7.1.3 — version banner emitted to debug log on every session
 		// start. Lets users / support verify which extension build is
@@ -2191,7 +2216,7 @@ export default function (pi: ExtensionAPI) {
 		if (!startCtx.hasUI) return;
 
 		// Try migration if a backend is already configured.
-		const hasKey = !!resolveDeepgramApiKey(config);
+		const hasKey = !!getDeepgramApiKey();
 		const hasLocalModel = config.backend === "local" && !!config.localModel;
 		const audioTool = detectAudioCaptureTool();
 		if (hasKey || hasLocalModel) {
@@ -2612,7 +2637,7 @@ export default function (pi: ExtensionAPI) {
 			if (sub === "test") {
 				cmdCtx.ui.notify("Testing voice setup…", "info");
 				const isLocal = config.backend === "local";
-				const dgKey = resolveDeepgramApiKey(config);
+				const dgKey = getDeepgramApiKey();
 				const tool = detectAudioCaptureTool();
 
 				const lines = [
@@ -2866,7 +2891,7 @@ export default function (pi: ExtensionAPI) {
 			formatDeviceSummary,
 			saveConfig: (cfg: VoiceConfig, scope: VoiceSettingsScope, cwd: string) => saveConfig(cfg, scope, cwd),
 			clearRecognizerCache: () => { try { clearRecognizerCache(); } catch {} },
-			resolveApiKey: () => resolveDeepgramApiKey(config) ?? undefined,
+			resolveApiKey: () => getDeepgramApiKey() ?? undefined,
 			deepgramLanguages: LANGUAGES.map(l => ({ name: l.name, code: l.code, popular: l.popular })),
 		};
 
@@ -3433,7 +3458,7 @@ export default function (pi: ExtensionAPI) {
 			} else {
 				const voiceId = config.ttsDeepgramVoiceId ?? "aura-asteria-en";
 				const voice = DEEPGRAM_TTS_VOICES.find(v => v.id === voiceId);
-				const apiKey = resolveDeepgramApiKey(config);
+				const apiKey = getDeepgramApiKey();
 				lines.push("  Deepgram backend:");
 				lines.push(`    Voice:      ${voiceId}${voice ? ` (${voice.name})` : ""}`);
 				lines.push(`    API key:    ${apiKey ? `set (${apiKey.slice(0, 8)}…)` : "NOT SET — set DEEPGRAM_API_KEY"}`);

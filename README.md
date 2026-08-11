@@ -65,8 +65,14 @@ Run `/voice-settings` inside Pi to choose your backend and configure everything 
 Sign up at [dpgr.am/pi-voice](https://dpgr.am/pi-voice) — $200 free credit, no card needed.
 
 ```bash
-export DEEPGRAM_API_KEY="your-key-here"    # add to ~/.zshrc or ~/.bashrc
+pi
+# Inside Pi:
+/login deepgram
 ```
+
+Pi resolves the saved credential when each session starts. On macOS, the login
+flow stores the key in the login Keychain and keeps only a Keychain lookup in
+Pi's `auth.json`. `DEEPGRAM_API_KEY` remains available as an environment fallback.
 
 #### Option B: Local models (fully offline)
 
@@ -305,7 +311,7 @@ Run `/voice test` inside Pi for full diagnostics.
 
 | Problem | Solution |
 |---------|----------|
-| "DEEPGRAM_API_KEY not set" | [Get a key](https://dpgr.am/pi-voice) → `export DEEPGRAM_API_KEY="..."` in `~/.zshrc` |
+| "DEEPGRAM_API_KEY not set" | Run `/login deepgram`, then retry dictation. |
 | "No audio capture tool found" | `brew install sox` or `brew install ffmpeg` |
 | Space doesn't activate voice | Run `/voice-settings` — voice may be disabled |
 | Local model not transcribing | Check `/voice-settings` → Device tab for sherpa-onnx status |
@@ -319,7 +325,7 @@ Run `/voice test` inside Pi for full diagnostics.
 - **Cloud STT** — audio is sent to Deepgram for transcription (Deepgram backend only)
 - **Local STT** — audio never leaves your machine (local backend)
 - **No telemetry** — pi-listen does not collect or transmit usage data
-- **API key** — stored in env var or Pi settings, never logged
+- **API key** — resolved through Pi provider auth and never logged. macOS stores `/login deepgram` keys in the login Keychain.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 

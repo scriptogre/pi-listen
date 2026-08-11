@@ -50,12 +50,15 @@
     "release": "bun run check && bun publish --access public"
   },
   "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@mariozechner/pi-coding-agent": ">=0.70.0",
     "@mariozechner/pi-tui": ">=0.70.0"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "^0.84.1",
     "@mariozechner/pi-coding-agent": "^0.70.5",
-    "@mariozechner/pi-tui": "^0.70.5"
+    "@mariozechner/pi-tui": "^0.70.5",
+    "@types/ws": "^8.18.1"
   },
   "pi": {
     "extensions": [
